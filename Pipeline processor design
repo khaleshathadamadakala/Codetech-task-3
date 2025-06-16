@@ -1,0 +1,100 @@
+module pipelined_processor(
+    input clk,
+    input reset
+);
+    // Instruction encoding: [opcode(2)][rd(2)][rs1(2)][rs2(2)/unused]
+    // opcode: 00=ADD, 01=SUB, 10=LOAD
+    reg [7:0] imem [0:15];   // Instruction memory
+    reg [7:0] dmem [0:15];   // Data memory
+    reg [7:0] regfile [0:3]; // 4 general-purpose registers
+
+    // Pipeline registers between stages
+    reg [7:0] IF_ID, ID_EX, EX_WB;
+    reg [7:0] pc;
+    reg [7:0] alu_out_EX, mem_out_WB;
+    reg [1:0] dest_EX, dest_WB;
+
+    // Stage 1: Instruction Fetch (IF)
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            pc <= 0;
+            IF_ID <= 0;
+        end else begin
+            IF_ID <= imem[pc];
+            pc <= pc + 1;
+        end
+    end
+
+    // Stage 2: Instruction Decode/Register Fetch (ID)
+    reg [1:0] opcode_ID, rd_ID, rs1_ID, rs2_ID;
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            ID_EX <= 0;
+        end else begin
+            opcode_ID <= IF_ID[7:6];
+            rd_ID     <= IF_ID[5:4];
+            rs1_ID    <= IF_ID[3:2];
+            rs2_ID    <= IF_ID[1:0];
+            ID_EX     <= IF_ID;
+        end
+    end
+
+    // Stage 3: Execute/Address Calculation (EX)
+    reg [7:0] alu_A, alu_B;
+    reg [1:0] opcode_EX, rd_EX, rs1_EX, rs2_EX;
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            EX_WB <= 0;
+            alu_out_EX <= 0;
+            dest_EX <= 0;
+        end else begin
+            opcode_EX <= ID_EX[7:6];
+            rd_EX     <= ID_EX[5:4];
+            rs1_EX    <= ID_EX[3:2];
+            rs2_EX    <= ID_EX[1:0];
+            case (ID_EX[7:6])
+                2'b00: alu_out_EX <= regfile[rs1_EX] + regfile[rs2_EX]; // ADD
+                2'b01: alu_out_EX <= regfile[rs1_EX] - regfile[rs2_EX]; // SUB
+                2'b10: alu_out_EX <= regfile[rs1_EX];                   // LOAD address calculation
+                default: alu_out_EX <= 0;
+            endcase
+            dest_EX <= rd_EX;
+            EX_WB <= ID_EX;
+        end
+    end
+
+    // Stage 4: Memory Access / Write Back (WB)
+    reg [1:0] opcode_WB, rd_WB, rs1_WB, rs2_WB;
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            mem_out_WB <= 0;
+        end else begin
+            opcode_WB <= EX_WB[7:6];
+            rd_WB     <= EX_WB[5:4];
+            rs1_WB    <= EX_WB[3:2];
+            rs2_WB    <= EX_WB[1:0];
+            if (opcode_WB == 2'b10) // LOAD
+                regfile[rd_WB] <= dmem[alu_out_EX];
+            else // ADD/SUB
+                regfile[dest_EX] <= alu_out_EX;
+        end
+    end
+
+    // Testbench: Initial program and memory setup
+    initial begin
+        // Program: ADD R0, R1, R2; SUB R3, R0, R1; LOAD R2, [R3]
+        imem[0] = 8'b00_00_01_10; // ADD R0 = R1 + R2
+        imem[1] = 8'b01_11_00_01; // SUB R3 = R0 - R1
+        imem[2] = 8'b10_10_11_00; // LOAD R2 = Mem[R3]
+        imem[3] = 8'b00_00_00_00; // NOP
+
+        // Register init
+        regfile[0] = 8'd0;
+        regfile[1] = 8'd5;
+        regfile[2] = 8'd10;
+        regfile[3] = 8'd0;
+
+        // Data memory init
+        dmem[0] = 8'd99;
+end
+end module
